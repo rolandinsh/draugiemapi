@@ -3,10 +3,10 @@
 /**
  * Draugiem.lv API library for PHP
  *
- * Version 1.2.4 (04-06-2012)
+ * Version 1.2.6 (03-02-2014)
 
  *
- * Class for easier integration of your application with Draugiem.lv API.
+ * Class for easier integration of your application with draugiem.lv API.
  * Supports both draugiem.lv Passport applications and iframe based applications.
  * All user data information returned in functions is returned in following format:
  * 	array (
@@ -25,14 +25,16 @@
  *
  *
  * Version history:
+ * 1.2.6 (03-02-2014) - Fixed IE11 Cookie block
+ * 1.2.5 (07-11-2013) - Fixed Safari cookie fix on Chrome browser
  * 1.2.4 (04-06-2012) - Added request handling and POST request option for apiCall method.
  * 1.2.3 (15-09-2010) - Added callback.html support for Javascript functions, changed JS_URL
  * 1.2.2 (21-07-2010) - Fixed http_build_query bug, removed short PHP open tags, fixed session cleanup
  * 1.2.1 (14-06-2010) - Added getOnlineFriends function
  * 1.2.0 (31-05-2010) - Many improvements for compatibility with iframe applications
  *
- * @copyright SIA Draugiem, 2012
- * @version 1.2.4
+ * @copyright SIA Draugiem, 2014
+ * @version 1.2.6
  */
 class DraugiemApi {
 
@@ -344,7 +346,22 @@ class DraugiemApi {
 		} else {
 			return false;
 		}			
-	}	
+	}
+	
+	
+	/**
+	* Get list of all permissions, and if user has accepted them
+	*
+	* @return array List of all permissions with value 1 or 0 ( user has accepted that permission or not )
+	*/
+	public function getPermissions() {
+		$response = $this->apiCall('get_permissions');
+		if($response) {
+			return $response;
+		} else {
+			return false;
+		}
+	}
 
 	/**
 	 * Get list of friends of currently authorized user that also use this application and are currently logged in draugiem.lv.
@@ -515,32 +532,42 @@ class DraugiemApi {
 	 * This function has to be called before getSession() and after session_start()
 	 */
 	public function cookieFix(){
-
-		$user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
-
-		//Set up P3P policy to allow cookies in iframe with IE
-		if(strpos($user_agent, 'MSIE')){
+		
+		$agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? $_SERVER['HTTP_USER_AGENT'] : '';
+		
+		// MSIE cookie block: http://stackoverflow.com/questions/389456/ (jāsūta katru reizi, kad setosim cepumu uz IE6/7/8/11 caur iFrame)
+		if( strpos($agent, 'MSIE') || ( strpos($agent, 'rv:11') && strpos($agent, 'like Gecko') ) ){
 			header('P3P:CP="IDC DSP COR ADM DEVi TAIi PSA PSD IVAi IVDi CONi HIS OUR IND CNT"');
 		}
+		
+		$isSafariBrowser = strpos( $agent, 'Safari' ) !== false && strpos( $agent, 'Chrome' ) === false;
 
-		//Workaround for Safari - post a form with Javascript to create session cookie
-		if(empty($_COOKIE[session_name()]) && strpos($user_agent,'Safari') && isset($_GET['dr_auth_code']) && !isset($_GET['dr_cookie_fix'])){
-	?>
-		<html><head><title>Iframe Cookie fix</title></head>
-		<body>
-			<form name="cookieFix" method="get" action="">
-				<?php foreach($_GET as $key=>$val){
-					echo '<input type="hidden" name="'.htmlspecialchars($key).'" value="'.htmlspecialchars($val).'" />';
-				} ?>
-				<input type="hidden" name="dr_cookie_fix" value="1" />
-				<noscript><input type="submit" value="Continue" /></noscript>
-			</form>
-			<script type="text/javascript">document.cookieFix.submit();</script>
-		</body></html>
-	<?php
+		// Safari cookie unlocker
+		if ( empty( $_COOKIE[session_name()] ) && $isSafariBrowser
+			&& isset($_GET['dr_auth_code']) && ! isset($_GET['dr_cookie_fix']) ) {
+
+			echo '<html><head>
+			<script type="text/javascript">
+			window.onload = function() {
+				fix();
+			}
+			function fix() {
+				var w = window.open("/callback.html");
+				w.onload=function() {
+				 w.document.cookie="safari_fix=1; path=/";
+				 w.close();
+				 document.getElementById("fixLink").innerHTML = "Loading...";
+				 document.getElementById("fixForm").submit();
+				};
+			};
+			</script>
+			</head><body>'.PHP_EOL;
+			echo '<form id="fixForm" method="post" action="?'.http_build_query($_GET).'">'.PHP_EOL;
+			foreach ($_POST as $k=>$v) echo '<input type="hidden" name="'.htmlspecialchars($k).'" value="'.htmlspecialchars($v).'" />'.PHP_EOL;
+			echo '<div id="fixLink"><input type="button" onclick="javascript:fix();" value="Enable Safari cookies" /></div>'.PHP_EOL;
+			echo '</body></html>';
 			exit;
 		}
-
 	}
 
 
@@ -610,6 +637,7 @@ class DraugiemApi {
 			
 			$ch = curl_init(self::API_URL);
 			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 			curl_setopt($ch, CURLOPT_POSTFIELDS, $params);
 			$response = curl_exec($ch);
 			curl_close($ch);
